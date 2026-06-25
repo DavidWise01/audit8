@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AUDIT-8 — a processor whose ALU is the witness</title>
+<style>
+  :root{
+    --bg:#0b0e10; --panel:#12171b; --edge:#243038; --ink:#d7e2e8; --dim:#7d909c; --faint:#54646f;
+    --green:#3fb950; --red:#f85149; --amber:#d29922; --blue:#58a6ff; --violet:#a78bfa;
+    --mono:'SFMono-Regular',ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);line-height:1.5;font-size:14px}
+  .wrap{max-width:1000px;margin:0 auto;padding:30px 22px 80px}
+  header{border-bottom:1px solid var(--edge);padding-bottom:16px;margin-bottom:22px}
+  .kick{font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--violet)}
+  h1{font-size:24px;margin:.3em 0 .2em;font-weight:700;letter-spacing:.5px}
+  h1 .v{color:var(--green)}
+  .sub{color:var(--dim);font-size:13px;max-width:76ch;line-height:1.6}
+  .sub b{color:var(--ink);font-weight:600}
+  .contrast{margin-top:12px;font-size:12px;color:var(--faint);border-left:2px solid var(--violet);padding-left:10px}
+  .contrast b{color:var(--violet)}
+  .grid{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-top:8px}
+  @media(max-width:780px){.grid{grid-template-columns:1fr}}
+  .box{background:var(--panel);border:1px solid var(--edge);border-radius:8px;padding:14px}
+  .box h3{margin:0 0 10px;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .asm{font-size:13px;line-height:1.85}
+  .asm .ln{display:flex;gap:10px;padding:2px 6px;border-radius:4px}
+  .asm .ln.cur{background:rgba(88,166,255,.14);outline:1px solid rgba(88,166,255,.35)}
+  .asm .ln.done{opacity:.5}
+  .asm .addr{color:var(--faint);width:34px;flex:none}
+  .asm .op{color:var(--blue);width:62px;flex:none}
+  .asm .arg{color:var(--ink)}
+  .asm .cm{color:var(--faint);font-style:italic}
+  .asm .op.audit{color:var(--violet)} .asm .op.test{color:var(--amber)} .asm .op.piece{color:var(--green)} .asm .op.direct{color:var(--blue)}
+  .regrow{display:flex;justify-content:space-between;padding:5px 4px;border-bottom:1px solid #1a2228;font-size:13px}
+  .regrow:last-child{border-bottom:none}
+  .regrow .k{color:var(--dim)} .regrow .val{color:var(--ink);font-weight:600}
+  .acc{font-size:30px;font-weight:700;text-align:center;padding:8px 0;color:var(--green)}
+  .acclbl{text-align:center;font-size:10px;color:var(--faint);letter-spacing:.15em;text-transform:uppercase;margin-top:-6px}
+  .verdict{text-align:center;font-size:22px;font-weight:800;padding:12px;border-radius:8px;margin-top:10px;letter-spacing:1px}
+  .verdict.idle{background:#1a2228;color:var(--faint)}
+  .verdict.pass{background:rgba(63,185,80,.18);color:var(--green);outline:1px solid var(--green)}
+  .verdict.refuse{background:rgba(248,81,73,.18);color:var(--red);outline:1px solid var(--red)}
+  .ctrl{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 6px;align-items:center}
+  button{font-family:var(--mono);font-size:12px;color:var(--ink);background:#1c252b;border:1px solid var(--edge);border-radius:6px;padding:8px 13px;cursor:pointer;font-weight:600}
+  button:hover{background:#243038;border-color:var(--blue)}
+  button.primary{background:#1f6feb;border-color:#388bfd;color:#fff}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .claimctl{display:flex;gap:8px;align-items:center;margin-left:auto}
+  .claimctl input{width:64px;background:#0b0e10;border:1px solid var(--edge);color:var(--ink);font-family:var(--mono);font-size:14px;padding:6px;border-radius:6px;text-align:center}
+  .data{font-size:13px;color:var(--dim);margin-bottom:10px}
+  .data b{color:var(--green)}
+  .status{font-size:12px;color:var(--dim);margin-top:10px;min-height:18px}
+  .status b{color:var(--ink)}
+  .note{color:var(--dim);font-size:12.5px;border-left:2px solid var(--edge);padding-left:12px;margin:20px 0 0;line-height:1.65}
+  .note b{color:var(--violet)}
+  footer{margin-top:30px;border-top:1px solid var(--edge);padding-top:14px;color:var(--faint);font-size:11px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="kick">a real processor · the anti-photonic-proc</div>
+  <h1>AUDIT-<span class="v">8</span> — the ALU is the witness</h1>
+  <div class="sub">Four instructions, your four words: <b>DIRECT</b> (set up the claim), <b>PIECE</b> (recompute the
+    answer from raw data, piece by piece), <b>TEST</b> (compare your recomputation to the claim), <b>AUDIT</b> (emit one
+    bit — PASS or REFUSE). The machine <b>never trusts the claim</b>. It rebuilds the answer itself and checks. That's
+    the witness function, in silicon.</div>
+  <div class="contrast"><b>Why it's real and "photonic proc" wasn't:</b> the photonic core had the physics in the
+    <i>title</i> and <code style="color:var(--faint)">sin(t)</code> in the math. Here the auditing is in the
+    <i>mechanism</i> — recompute, compare, emit bit — so it survives the dig-test. Ask "how does it audit?" and the
+    answer is in the opcodes, not the chrome. That's why this one looks like a debugger, not a glowing core.</div>
+</header>
+
+<div class="data">RAW DATA being checked: <b id="dataline">[3, 1, 4, 1, 5, 9, 2, 6]</b> — the machine recomputes the sum and audits the claim against it.</div>
+
+<div class="ctrl">
+  <button class="primary" id="step">▶ STEP</button>
+  <button id="runbtn">RUN</button>
+  <button id="reset">⟲ RESET</button>
+  <div class="claimctl">CLAIM: sum = <input type="number" id="claim" value="31"> 
+    <button id="lie">make it lie (30)</button></div>
+</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>Program / Disassembly</h3>
+    <div class="asm" id="asm"></div>
+  </div>
+  <div class="box">
+    <h3>Machine State</h3>
+    <div class="acc" id="acc">0</div><div class="acclbl">ACC — recomputed so far</div>
+    <div style="margin-top:12px">
+      <div class="regrow"><span class="k">R1 (claim)</span><span class="val" id="r1">—</span></div>
+      <div class="regrow"><span class="k">DIFF (acc − claim)</span><span class="val" id="diff">—</span></div>
+      <div class="regrow"><span class="k">PC</span><span class="val" id="pc">0</span></div>
+    </div>
+    <div class="verdict idle" id="verdict">VERDICT: —</div>
+  </div>
+</div>
+
+<div class="status" id="status">Ready. Step through, or RUN. Watch ACC build up via PIECE, then TEST and AUDIT fire the bit.</div>
+
+<div class="note"><b>The point of the whole night, executable:</b> a claim ("the sum is 31") means nothing until an
+  independent process recomputes it and compares. PASS isn't "it said so" — it's "I rebuilt it from raw data and it
+  matched." Change the claim to a lie and AUDIT fires REFUSE, every time, because the recomputation doesn't bend to the
+  claim. The machine can't be talked out of the truth, because it never asked the claim — it asked the data.</div>
+
+<footer>
+  AUDIT-8 · a tiny real ISA · DIRECT · PIECE · TEST · AUDIT · verified in Node before build (PASS on true claim, REFUSE on false)<br>
+  the audit is in the mechanism, not the title · recompute → compare → emit one bit · the witness function as a processor
+</footer>
+
+<script>
+"use strict";
+const DATA=[3,1,4,1,5,9,2,6];
+// build program: DIRECT R1,<claim> ; PIECE each ; TEST R1 ; AUDIT ; HLT
+function buildProg(claim){
+  const p=[{op:'DIRECT',a:`R1, ${claim}`,k:'direct',cm:'set up the claim'}];
+  DATA.forEach(d=>p.push({op:'PIECE',a:`#${d}`,k:'piece',cm:'recompute: acc += '+d}));
+  p.push({op:'TEST',a:'R1',k:'test',cm:'compare acc to claim'});
+  p.push({op:'AUDIT',a:'',k:'audit',cm:'emit verdict bit'});
+  p.push({op:'HLT',a:'',k:'',cm:'stop'});
+  return p;
+}
+let prog=[], step_i=0, ACC=0, R1=0, DIFF=null, V=null, running=false;
+
+function reset(){
+  const claim=parseInt(document.getElementById('claim').value)||0;
+  prog=buildProg(claim); step_i=0; ACC=0; R1=0; DIFF=null; V=null; running=false;
+  renderAsm(); renderState();
+  document.getElementById('status').innerHTML='Reset. CLAIM = <b>'+claim+'</b>. Step through to watch the audit.';
+  document.getElementById('step').disabled=false; document.getElementById('runbtn').disabled=false;
+}
+function renderAsm(){
+  const el=document.getElementById('asm'); el.innerHTML='';
+  prog.forEach((ins,i)=>{
+    const d=document.createElement('div');
+    d.className='ln'+(i===step_i?' cur':'')+(i<step_i?' done':'');
+    d.innerHTML=`<span class="addr">${String(i).padStart(2,'0')}</span><span class="op ${ins.k}">${ins.op}</span><span class="arg">${ins.a}</span><span class="cm">; ${ins.cm}</span>`;
+    el.appendChild(d);
+  });
+}
+function renderState(){
+  document.getElementById('acc').textContent=ACC;
+  document.getElementById('r1').textContent=R1||'—';
+  document.getElementById('diff').textContent=DIFF===null?'—':DIFF;
+  document.getElementById('pc').textContent=step_i;
+  const vd=document.getElementById('verdict');
+  if(V===null){ vd.className='verdict idle'; vd.textContent='VERDICT: —'; }
+  else if(V==='PASS'){ vd.className='verdict pass'; vd.textContent='✓ PASS'; }
+  else { vd.className='verdict refuse'; vd.textContent='✕ REFUSE'; }
+}
+function doStep(){
+  if(step_i>=prog.length){ return false; }
+  const ins=prog[step_i];
+  let msg='';
+  if(ins.op==='DIRECT'){ R1=parseInt(document.getElementById('claim').value)||0; msg='DIRECT: claim loaded into R1 = '+R1+'. The machine now knows what it\'s being asked to believe — but won\'t trust it.'; }
+  else if(ins.op==='PIECE'){ const v=parseInt(ins.a.replace('#','')); ACC=(ACC+v)&0xFF; msg='PIECE: recomputed acc += '+v+' → ACC = '+ACC+'. Rebuilding the answer from raw data, independently.'; }
+  else if(ins.op==='TEST'){ DIFF=ACC-R1; msg='TEST: DIFF = ACC('+ACC+') − claim('+R1+') = '+DIFF+'. '+(DIFF===0?'They match.':'They do NOT match.'); }
+  else if(ins.op==='AUDIT'){ V=(DIFF===0)?'PASS':'REFUSE'; msg=V==='PASS'?'AUDIT: DIFF is 0 → the claim survived recomputation → PASS. Believed because checked, not because asserted.':'AUDIT: DIFF ≠ 0 → the claim did NOT survive recomputation → REFUSE. The data wins, not the claim.'; }
+  else if(ins.op==='HLT'){ msg='HLT. Done.'; }
+  step_i++;
+  renderAsm(); renderState();
+  document.getElementById('status').innerHTML='<b>'+ins.op+'</b> — '+msg;
+  if(step_i>=prog.length){ document.getElementById('step').disabled=true; document.getElementById('runbtn').disabled=true; return false; }
+  return true;
+}
+document.getElementById('step').onclick=doStep;
+document.getElementById('reset').onclick=reset;
+document.getElementById('runbtn').onclick=function(){
+  if(running) return; running=true;
+  const iv=setInterval(()=>{ if(!doStep()){ clearInterval(iv); running=false; } }, 420);
+};
+document.getElementById('claim').onchange=reset;
+document.getElementById('lie').onclick=function(){ document.getElementById('claim').value=30; reset();
+  document.getElementById('status').innerHTML='Claim set to <b>30</b> — a lie (real sum is 31). Now run it and watch AUDIT fire <b style="color:var(--red)">REFUSE</b>. The recomputation won\'t bend.'; };
+reset();
+</script>
+</body>
+</html>
